@@ -1,160 +1,350 @@
-//! On-screen touch gamepad for mobile (Android) builds.
+//! On-screen touch gamepad for Android.
 //!
-//! The desktop games assume a keyboard. On a phone the only input
-//! is the touch screen, so this module maps touches on translucent
-//! on-screen buttons to the game's own key codes.
+//! Phones have no keyboard, so this draws translucent controls over the
+//! game and turns touches on them into the keys and stick axes the game
+//! already reads:
 //!
-//! Layout (in normalized viewport coordinates, 0..1):
+//! - Left stick (bottom-left): `LeftStickX` / `LeftStickY`, which drive
+//!   character movement relative to the camera.
+//! - A (bottom-right): `GamePadEast` + `F` + `Space` — interact, confirm,
+//!   advance dialog.
+//! - B: `Escape` + `GamePadSouth` — cancel, menu, skip movies.
+//! - Camera buttons: `A` / `D` rotate the camera.
 //!
-//!   bottom-left  : D-pad (up/down/left/right)  -> Up/Down/Left/Right
-//!   bottom-right : A (confirm) -> Space, B (cancel) -> Escape
-//!                  X (interact) -> F, Y (menu) -> Num1
+//! Touches that start on a control are owned by it until the finger is
+//! lifted, so they are not also forwarded to imgui as mouse clicks
+//! (otherwise one tap on A would advance a dialog twice: once for the key,
+//! once for the click). Touches elsewhere still reach imgui, so menus stay
+//! tappable.
 //!
-//! Multi-touch is supported: each finger is tracked independently so
-//! the player can hold a direction while pressing a button.
+//! The pad is only active on Android; on other platforms every function
+//! here is a no-op.
 
-use crate::input::{Key, KeyState};
+use std::cell::RefCell;
 
-/// A single on-screen button, defined by its centre and radius in
-/// normalized window coordinates.
-#[derive(Clone, Copy, Debug)]
-pub struct TouchButton {
-    pub key: Key,
-    pub cx: f32,
-    pub cy: f32,
-    pub radius: f32,
-    pub label: &'static str,
+use super::{Axis, AxisState, Key, KeyState};
+
+fn enabled() -> bool {
+    cfg!(target_os = "android")
 }
 
-impl TouchButton {
-    const fn new(key: Key, cx: f32, cy: f32, radius: f32, label: &'static str) -> Self {
-        Self {
-            key,
-            cx,
-            cy,
-            radius,
-            label,
-        }
-    }
-
-    /// Hit test in normalized coordinates.
-    pub fn hit(&self, x: f32, y: f32) -> bool {
-        let dx = x - self.cx;
-        let dy = y - self.cy;
-        dx * dx + dy * dy <= self.radius * self.radius
-    }
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Anchor {
+    BottomLeft,
+    BottomRight,
 }
 
-/// The default button set. Radii are generous so the controls remain
-/// usable on a phone held in landscape.
-pub const BUTTONS: &[TouchButton] = &[
-    // D-pad, bottom-left quadrant.
-    TouchButton::new(Key::Up, 0.11, 0.72, 0.055, "^"),
-    TouchButton::new(Key::Down, 0.11, 0.90, 0.055, "v"),
-    TouchButton::new(Key::Left, 0.04, 0.81, 0.055, "<"),
-    TouchButton::new(Key::Right, 0.18, 0.81, 0.055, ">"),
-    // Face buttons, bottom-right quadrant.
-    TouchButton::new(Key::Space, 0.90, 0.82, 0.062, "A"),
-    TouchButton::new(Key::Escape, 0.80, 0.90, 0.055, "B"),
-    TouchButton::new(Key::F, 0.80, 0.72, 0.055, "X"),
-    TouchButton::new(Key::Num1, 0.96, 0.68, 0.045, "Y"),
+#[derive(Clone, Copy)]
+struct Button {
+    /// Keys pressed together while the button is held.
+    keys: &'static [Key],
+    label: &'static str,
+    anchor: Anchor,
+    /// Centre offset from the anchored corner, in units of the shorter
+    /// screen side.
+    dx: f32,
+    dy: f32,
+    radius: f32,
+}
+
+const BUTTONS: &[Button] = &[
+    Button {
+        keys: &[Key::GamePadEast, Key::F, Key::Space],
+        label: "A",
+        anchor: Anchor::BottomRight,
+        dx: 0.17,
+        dy: 0.27,
+        radius: 0.095,
+    },
+    Button {
+        keys: &[Key::Escape, Key::GamePadSouth],
+        label: "B",
+        anchor: Anchor::BottomRight,
+        dx: 0.38,
+        dy: 0.13,
+        radius: 0.08,
+    },
+    Button {
+        keys: &[Key::A],
+        label: "<",
+        anchor: Anchor::BottomRight,
+        dx: 0.40,
+        dy: 0.44,
+        radius: 0.065,
+    },
+    Button {
+        keys: &[Key::D],
+        label: ">",
+        anchor: Anchor::BottomRight,
+        dx: 0.15,
+        dy: 0.52,
+        radius: 0.065,
+    },
 ];
 
-/// Tracks which button each active touch id is currently pressing.
-pub struct TouchGamepad {
-    /// (touch id, button index) for every finger currently down.
-    active: Vec<(u64, usize)>,
-    /// Whether the gamepad layer is enabled.
-    enabled: bool,
+/// Stick placement, same units as [`Button`].
+const STICK_DX: f32 = 0.27;
+const STICK_DY: f32 = 0.27;
+/// Full deflection distance.
+const STICK_RADIUS: f32 = 0.17;
+/// A touch starting within this distance of the stick centre grabs it.
+const STICK_GRAB_RADIUS: f32 = 0.27;
+
+#[derive(Clone, Copy, PartialEq)]
+enum Control {
+    Stick,
+    Button(usize),
 }
 
-impl TouchGamepad {
-    pub fn new() -> Self {
-        Self {
+struct Pad {
+    width: f32,
+    height: f32,
+    /// Fingers currently owned by a control.
+    active: Vec<(u64, Control)>,
+    /// Fingers lifted since the last frame. They stay "owned" until the
+    /// frame ends, so the imgui touch emulation sees them as ours no matter
+    /// which window-event callback runs first.
+    released: Vec<u64>,
+    stick: [f32; 2],
+    /// Set when the stick moved or was released, so the axis is written
+    /// once more (to zero) instead of overriding a physical gamepad.
+    stick_dirty: bool,
+}
+
+thread_local! {
+    static PAD: RefCell<Pad> = const {
+        RefCell::new(Pad {
+            width: 0.,
+            height: 0.,
             active: Vec::new(),
-            enabled: true,
-        }
+            released: Vec::new(),
+            stick: [0., 0.],
+            stick_dirty: false,
+        })
+    };
+}
+
+impl Pad {
+    fn unit(&self) -> f32 {
+        self.width.min(self.height)
     }
 
-    pub fn set_enabled(&mut self, enabled: bool) {
-        self.enabled = enabled;
-        if !enabled {
-            self.active.clear();
-        }
+    fn corner_point(&self, anchor: Anchor, dx: f32, dy: f32) -> [f32; 2] {
+        let u = self.unit();
+        let x = match anchor {
+            Anchor::BottomLeft => dx * u,
+            Anchor::BottomRight => self.width - dx * u,
+        };
+        [x, self.height - dy * u]
     }
 
-    pub fn enabled(&self) -> bool {
-        self.enabled
+    fn stick_center(&self) -> [f32; 2] {
+        self.corner_point(Anchor::BottomLeft, STICK_DX, STICK_DY)
     }
 
-    /// Find the topmost button under a normalized point.
-    fn button_at(&self, x: f32, y: f32) -> Option<usize> {
-        BUTTONS.iter().position(|b| b.hit(x, y))
+    fn button_center(&self, b: &Button) -> [f32; 2] {
+        self.corner_point(b.anchor, b.dx, b.dy)
     }
 
-    /// A finger landed at (x, y). Returns the key it presses, if any.
-    pub fn touch_started(&mut self, id: u64, x: f32, y: f32) -> Option<Key> {
-        if !self.enabled {
+    fn hit(&self, x: f32, y: f32) -> Option<Control> {
+        if self.width <= 0. || self.height <= 0. {
             return None;
         }
-        let idx = self.button_at(x, y)?;
-        // If this finger already holds a button, release it first so a
-        // slide across the pad cannot leave a key stuck down.
-        self.active.retain(|(tid, _)| *tid != id);
-        self.active.push((id, idx));
-        Some(BUTTONS[idx].key)
-    }
-
-    /// A finger moved. Handles sliding from one button to another.
-    /// Returns (key released, key pressed) when the button changed.
-    pub fn touch_moved(&mut self, id: u64, x: f32, y: f32) -> (Option<Key>, Option<Key>) {
-        if !self.enabled {
-            return (None, None);
-        }
-        let current = self
-            .active
-            .iter()
-            .find(|(tid, _)| *tid == id)
-            .map(|(_, i)| *i);
-        let next = self.button_at(x, y);
-
-        match (current, next) {
-            (Some(cur), Some(nxt)) if cur == nxt => (None, None),
-            (cur, next) => {
-                self.active.retain(|(tid, _)| *tid != id);
-                if let Some(nxt) = next {
-                    self.active.push((id, nxt));
-                }
-                (cur.map(|i| BUTTONS[i].key), next.map(|i| BUTTONS[i].key))
+        let u = self.unit();
+        for (i, b) in BUTTONS.iter().enumerate() {
+            let [cx, cy] = self.button_center(b);
+            if dist2(x, y, cx, cy) <= (b.radius * u).powi(2) {
+                return Some(Control::Button(i));
             }
         }
+        let [cx, cy] = self.stick_center();
+        if dist2(x, y, cx, cy) <= (STICK_GRAB_RADIUS * u).powi(2) {
+            return Some(Control::Stick);
+        }
+        None
     }
 
-    /// A finger lifted or was cancelled. Returns the key it releases.
-    pub fn touch_ended(&mut self, id: u64) -> Option<Key> {
-        let idx = self
-            .active
-            .iter()
-            .find(|(tid, _)| *tid == id)
-            .map(|(_, i)| *i);
-        self.active.retain(|(tid, _)| *tid != id);
-        idx.map(|i| BUTTONS[i].key)
+    fn control_of(&self, id: u64) -> Option<Control> {
+        self.active.iter().find(|(t, _)| *t == id).map(|(_, c)| *c)
     }
 
-    /// Apply held state of every active touch to the key buffer.
-    /// Called once per event batch so held buttons stay down.
-    pub fn apply_held(&self, states: &mut [KeyState]) {
-        if !self.enabled {
-            return;
+    fn set_stick_from(&mut self, x: f32, y: f32) {
+        let [cx, cy] = self.stick_center();
+        let r = STICK_RADIUS * self.unit();
+        let mut sx = (x - cx) / r;
+        // Screen y grows downward; LeftStickY > 0 means "forward".
+        let mut sy = (cy - y) / r;
+        let len = (sx * sx + sy * sy).sqrt();
+        if len > 1. {
+            sx /= len;
+            sy /= len;
         }
-        for (_, idx) in &self.active {
-            states[BUTTONS[*idx].key as usize].set_down(true);
-        }
+        self.stick = [sx, sy];
+        self.stick_dirty = true;
     }
 }
 
-impl Default for TouchGamepad {
-    fn default() -> Self {
-        Self::new()
+fn dist2(x: f32, y: f32, cx: f32, cy: f32) -> f32 {
+    (x - cx).powi(2) + (y - cy).powi(2)
+}
+
+fn press(states: &mut [KeyState], keys: &[Key]) {
+    for k in keys {
+        let s = &mut states[*k as usize];
+        s.set_down(true);
+        s.set_pressed(true);
     }
+}
+
+fn release(states: &mut [KeyState], keys: &[Key]) {
+    for k in keys {
+        let s = &mut states[*k as usize];
+        s.set_down(false);
+        s.set_released(true);
+    }
+}
+
+/// Size of the drawable surface in physical pixels (the same space as
+/// winit touch locations).
+pub fn set_viewport(width: f32, height: f32) {
+    if !enabled() {
+        return;
+    }
+    PAD.with(|p| {
+        let mut p = p.borrow_mut();
+        p.width = width;
+        p.height = height;
+    });
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum TouchPhase {
+    Started,
+    Moved,
+    Ended,
+}
+
+/// Feed one touch event. Writes key presses/releases into `states`.
+pub fn handle_touch(states: &mut [KeyState], id: u64, phase: TouchPhase, x: f32, y: f32) {
+    if !enabled() {
+        return;
+    }
+    PAD.with(|p| {
+        let mut p = p.borrow_mut();
+        match phase {
+            TouchPhase::Started => {
+                if p.control_of(id).is_some() {
+                    return;
+                }
+                match p.hit(x, y) {
+                    Some(Control::Button(i)) => {
+                        p.active.push((id, Control::Button(i)));
+                        press(states, BUTTONS[i].keys);
+                    }
+                    Some(Control::Stick) => {
+                        // Only one finger drives the stick.
+                        if !p.active.iter().any(|(_, c)| *c == Control::Stick) {
+                            p.active.push((id, Control::Stick));
+                            p.set_stick_from(x, y);
+                        }
+                    }
+                    None => {}
+                }
+            }
+            TouchPhase::Moved => {
+                if p.control_of(id) == Some(Control::Stick) {
+                    p.set_stick_from(x, y);
+                }
+            }
+            TouchPhase::Ended => {
+                if let Some(c) = p.control_of(id) {
+                    p.active.retain(|(t, _)| *t != id);
+                    p.released.push(id);
+                    match c {
+                        Control::Button(i) => release(states, BUTTONS[i].keys),
+                        Control::Stick => {
+                            p.stick = [0., 0.];
+                            p.stick_dirty = true;
+                        }
+                    }
+                }
+            }
+        }
+    });
+}
+
+/// True if this touch belongs to the pad and must not reach imgui.
+pub fn owns_touch(id: u64, phase: TouchPhase, x: f32, y: f32) -> bool {
+    if !enabled() {
+        return false;
+    }
+    PAD.with(|p| {
+        let p = p.borrow();
+        if p.control_of(id).is_some() || p.released.contains(&id) {
+            return true;
+        }
+        phase == TouchPhase::Started && p.hit(x, y).is_some()
+    })
+}
+
+/// Called once per input frame: publishes the stick to the axis state and
+/// forgets fingers lifted during the previous frame.
+pub fn end_frame(axis_states: &mut [AxisState]) {
+    if !enabled() {
+        return;
+    }
+    PAD.with(|p| {
+        let mut p = p.borrow_mut();
+        let stick_held = p.active.iter().any(|(_, c)| *c == Control::Stick);
+        if stick_held || p.stick_dirty {
+            axis_states[Axis::LeftStickX as usize].set_value(p.stick[0]);
+            axis_states[Axis::LeftStickY as usize].set_value(p.stick[1]);
+            p.stick_dirty = false;
+        }
+        p.released.clear();
+    });
+}
+
+/// Draw the controls on top of everything else.
+pub fn draw_overlay(ui: &imgui::Ui) {
+    if !enabled() {
+        return;
+    }
+    PAD.with(|p| {
+        let p = p.borrow();
+        if p.width <= 0. || p.height <= 0. {
+            return;
+        }
+        let u = p.unit();
+        let dl = ui.get_foreground_draw_list();
+        let idle = [1.0, 1.0, 1.0, 0.22];
+        let held = [1.0, 0.85, 0.35, 0.45];
+        let ring = [1.0, 1.0, 1.0, 0.55];
+        let text = [1.0, 1.0, 1.0, 0.9];
+
+        // Stick: base ring + knob.
+        let [cx, cy] = p.stick_center();
+        let r = STICK_RADIUS * u;
+        dl.add_circle([cx, cy], r, idle).filled(true).build();
+        dl.add_circle([cx, cy], r, ring).thickness(2.0).build();
+        let knob = [cx + p.stick[0] * r, cy - p.stick[1] * r];
+        let knob_color = if p.active.iter().any(|(_, c)| *c == Control::Stick) {
+            held
+        } else {
+            ring
+        };
+        dl.add_circle(knob, r * 0.45, knob_color).filled(true).build();
+
+        for (i, b) in BUTTONS.iter().enumerate() {
+            let [bx, by] = p.button_center(b);
+            let br = b.radius * u;
+            let pressed = p.active.iter().any(|(_, c)| *c == Control::Button(i));
+            dl.add_circle([bx, by], br, if pressed { held } else { idle })
+                .filled(true)
+                .build();
+            dl.add_circle([bx, by], br, ring).thickness(2.0).build();
+            let size = ui.calc_text_size(b.label);
+            dl.add_text([bx - size[0] / 2., by - size[1] / 2.], text, b.label);
+        }
+    });
 }

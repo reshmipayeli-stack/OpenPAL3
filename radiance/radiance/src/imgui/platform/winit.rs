@@ -83,6 +83,16 @@ impl ImguiPlatform {
             ..
         }) = event
         {
+            let pad_phase = match *phase {
+                TouchPhase::Started => crate::input::touch_gamepad::TouchPhase::Started,
+                TouchPhase::Moved => crate::input::touch_gamepad::TouchPhase::Moved,
+                TouchPhase::Ended | TouchPhase::Cancelled => {
+                    crate::input::touch_gamepad::TouchPhase::Ended
+                }
+            };
+            if crate::input::touch_gamepad::owns_touch(0, pad_phase, *x as f32, *y as f32) {
+                return;
+            }
             io.mouse_pos = [*x as f32, *y as f32];
             let state = match *phase {
                 TouchPhase::Started => ElementState::Pressed,
@@ -119,6 +129,7 @@ impl ImguiPlatform {
         let mut context = self.context.as_ref().borrow_mut();
         let size = window.inner_size();
         context.io_mut().display_size = [size.width as f32, size.height as f32];
+        crate::input::touch_gamepad::set_viewport(size.width as f32, size.height as f32);
     }
 
     fn update_cursor_shape(&self) {}

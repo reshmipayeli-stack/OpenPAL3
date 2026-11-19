@@ -236,6 +236,7 @@ impl ImguiContext {
         self.platform.borrow_mut().prepare_render(ui);
 
         draw(&ui);
+        crate::input::touch_gamepad::draw_overlay(ui);
 
         ImguiFrame { frame_begun: true }
     }

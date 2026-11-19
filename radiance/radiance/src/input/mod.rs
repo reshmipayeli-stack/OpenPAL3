@@ -6,6 +6,7 @@ mod gamepad;
 mod keyboard;
 mod mouse;
 mod synthetic;
+pub mod touch_gamepad;
 
 use std::{cell::RefCell, rc::Rc};
 

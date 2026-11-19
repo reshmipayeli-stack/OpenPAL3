@@ -92,6 +92,22 @@ impl CoreInputEngine {
                 } = &mut *me;
                 keyboard.process_window_event(last_key_states, event);
                 mouse.process_window_event(last_mouse_button_states, last_mouse_wheel, event);
+                if let winit::event::WindowEvent::Touch(touch) = event {
+                    let phase = match touch.phase {
+                        winit::event::TouchPhase::Started => super::touch_gamepad::TouchPhase::Started,
+                        winit::event::TouchPhase::Moved => super::touch_gamepad::TouchPhase::Moved,
+                        winit::event::TouchPhase::Ended | winit::event::TouchPhase::Cancelled => {
+                            super::touch_gamepad::TouchPhase::Ended
+                        }
+                    };
+                    super::touch_gamepad::handle_touch(
+                        last_key_states,
+                        touch.id,
+                        phase,
+                        touch.location.x as f32,
+                        touch.location.y as f32,
+                    );
+                }
             }));
 
             let device_self = _self;
@@ -147,6 +163,7 @@ impl InputEngine for CoreInputEngine {
 
 impl InputEngineInternal for CoreInputEngine {
     fn update(&mut self, _delta_sec: f32) {
+        super::touch_gamepad::end_frame(&mut self.axis_states);
         self.gamepad
             .process_message(&mut self.last_key_states, &mut self.axis_states);
 
