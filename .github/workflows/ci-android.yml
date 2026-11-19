@@ -62,12 +62,21 @@ jobs:
           path: vcpkg_installed
           key: ${{ runner.os }}-android-vcpkg-${{ hashFiles('vcpkg.json') }}
       - name: Install ffmpeg via vcpkg
-        if: steps.cache-ffmpeg.outputs.cache-hit != 'true'
         run: |
-          git clone https://github.com/microsoft/vcpkg.git /tmp/vcpkg
-          /tmp/vcpkg/bootstrap-vcpkg.sh
+          set -euo pipefail
+          if [ ! -x /tmp/vcpkg/vcpkg ]; then
+            git clone https://github.com/microsoft/vcpkg.git /tmp/vcpkg
+            /tmp/vcpkg/bootstrap-vcpkg.sh
+          fi
           /tmp/vcpkg/vcpkg install --triplet=arm64-android
-          cp -r /tmp/vcpkg/vcpkg_installed ./vcpkg_installed
+          echo "--- where did vcpkg put things? ---"
+          ls -d vcpkg_installed 2>/dev/null || true
+          ls -d /tmp/vcpkg/vcpkg_installed 2>/dev/null || true
+          if [ -d /tmp/vcpkg/vcpkg_installed ] && [ ! -d vcpkg_installed ]; then
+            cp -r /tmp/vcpkg/vcpkg_installed ./vcpkg_installed
+          fi
+          test -d vcpkg_installed
+          find vcpkg_installed -name "*.a" | head -20
       - name: Install cargo-apk
         run: cargo install cargo-apk --locked
       - name: Build APK
