@@ -54,3 +54,14 @@ jobs:
         run: cargo install --force cargo-apk
       - name: Build APK
         run: cd yaobow/yaobow && cargo apk build --lib
+      - name: Find and upload APK
+        run: |
+          find . -name "*.apk" -type f 2>/dev/null
+          mkdir -p apk-out
+          find . -name "*.apk" -type f -exec cp {} apk-out/ \;
+          ls -la apk-out/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: openpal3-android-apk
+          path: apk-out/*.apk
+          if-no-files-found: error
