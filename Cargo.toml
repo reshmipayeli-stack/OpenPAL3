@@ -35,6 +35,10 @@ imgui = { version = "0.12", features = ["docking", "tables-api"] }
 mini-fs = { path = "radiance/3rdparty/mini-fs" }
 
 [patch.crates-io]
+# Android: upstream imgui-winit-support 0.13.0 uses
+# KeyEventExtModifierSupplement::key_without_modifiers, which winit does not
+# expose on Android. The vendored copy cfg-gates that call.
+imgui-winit-support = { path = "vendor/imgui-winit-support" }
 filetime = { git = "https://github.com/dontpanic92/filetime", branch = "yaobow" }
 chlorine = { git = "https://github.com/dontpanic92/chlorine", branch = "yaobow" }
 vcpkg = { git = "https://github.com/dontpanic92/vcpkg-rs", branch = "yaobow" }
