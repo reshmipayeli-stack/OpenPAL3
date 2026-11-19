@@ -18,7 +18,13 @@ fn has_pal3_data(dir: &Path) -> bool {
 
 /// Search shared storage for `PAL3.zip`, a few directory levels deep.
 fn find_zip() -> Option<PathBuf> {
-    let roots = ["/sdcard", "/storage/emulated/0", "/storage"];
+    let roots = [
+        "/sdcard",
+        "/storage/emulated/0",
+        "/mnt/sdcard",
+        "/storage",
+        "/storage/media/100/local/files/Docs",
+    ];
     for root in roots {
         if let Some(p) = search(Path::new(root), 0) {
             return Some(p);
