@@ -107,17 +107,26 @@ jobs:
           export PATH="$HOME/.cargo/bin:$PATH"
           rustup target list --installed | grep aarch64 || rustup target add aarch64-linux-android
           TOOLCHAIN="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          SYSROOT="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot"
           echo "toolchain: $TOOLCHAIN"
+          echo "sysroot:   $SYSROOT"
           ls "$TOOLCHAIN"/aarch64-linux-android*-clang | head -5
+          echo "--- sysroot include ---"
+          ls "$SYSROOT/usr/include" | head -5
           export CC_aarch64_linux_android="$TOOLCHAIN/aarch64-linux-android24-clang"
           export CXX_aarch64_linux_android="$TOOLCHAIN/aarch64-linux-android24-clang++"
           export AR_aarch64_linux_android="$TOOLCHAIN/llvm-ar"
           export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="$CC_aarch64_linux_android"
-          export CFLAGS_aarch64_linux_android="--target=aarch64-linux-android24"
-          export CXXFLAGS_aarch64_linux_android="--target=aarch64-linux-android24"
-          cargo build --release --target aarch64-linux-android -p yaobow --lib 2>&1 | tail -40
+          export CFLAGS_aarch64_linux_android="--target=aarch64-linux-android24 --sysroot=$SYSROOT"
+          export CXXFLAGS_aarch64_linux_android="--target=aarch64-linux-android24 --sysroot=$SYSROOT"
+          # bindgen (ffmpeg-sys) must use the Android sysroot, not host /usr/include
+          export BINDGEN_EXTRA_CLANG_ARGS_aarch64_linux_android="--sysroot=$SYSROOT --target=aarch64-linux-android24 -I$SYSROOT/usr/include -I$SYSROOT/usr/include/aarch64-linux-android"
+          export BINDGEN_EXTRA_CLANG_ARGS="--sysroot=$SYSROOT --target=aarch64-linux-android24 -I$SYSROOT/usr/include -I$SYSROOT/usr/include/aarch64-linux-android"
+          export LIBCLANG_PATH="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/lib"
+          echo "BINDGEN_EXTRA_CLANG_ARGS=$BINDGEN_EXTRA_CLANG_ARGS"
+          cargo build --release --target aarch64-linux-android -p yaobow --lib 2>&1 | tail -60
           echo "=== produced .so ==="
-          find target/aarch64-linux-android -name "*.so" -exec ls -lh {} \;
+          find target/aarch64-linux-android -name "*.so" -exec ls -lh {} \; || echo "none"
 
       - name: Package APK
         run: |
