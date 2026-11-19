@@ -218,10 +218,13 @@ fn android_main(app: radiance::android::AndroidApp) {
     radiance::android::set_android_app(app);
     if let Some(dir) = &app_dir {
         android_diag::report_environment(dir);
+        android_assets::ensure_pal3_data(dir);
     }
     android_entry();
     log::info!("android_entry returned");
 }
 
+#[cfg(target_os = "android")]
+mod android_assets;
 #[cfg(target_os = "android")]
 mod android_diag;
