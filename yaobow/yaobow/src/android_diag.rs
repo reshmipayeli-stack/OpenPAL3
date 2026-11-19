@@ -71,6 +71,13 @@ impl log::Log for TeeLogger {
 
 /// Install the logger and panic hook. Call first thing in `android_main`.
 pub fn init(log_dir: Option<PathBuf>) {
+    // Always try the shared Download directory first: in the HarmonyOS
+    // Android container it is visible from the host, while app-private
+    // storage is not.
+    let shared = PathBuf::from("/sdcard/Download");
+    let _ = std::fs::create_dir_all(&shared);
+    init_file(&shared.join("openpal3-debug.log"));
+
     let addr = SocketAddr::from(([127, 0, 0, 1], DIAG_PORT));
     if let Ok(stream) = TcpStream::connect_timeout(&addr, Duration::from_millis(800)) {
         let _ = stream.set_nodelay(true);
@@ -78,14 +85,7 @@ pub fn init(log_dir: Option<PathBuf>) {
     }
 
     if let Some(dir) = log_dir {
-        let _ = std::fs::create_dir_all(&dir);
-        if let Ok(file) = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(dir.join("openpal3.log"))
-        {
-            *FILE.lock().unwrap() = Some(file);
-        }
+        init_file(&dir.join("openpal3.log"));
     }
 
     let logger = TeeLogger {
@@ -157,5 +157,13 @@ pub fn report_environment(app_dir: &Path) {
                 .collect();
             log::info!("vulkan drivers in {dir}: {vk:?}");
         }
+    }
+}
+
+/// Open (or replace) the active log file.
+fn init_file(path: &Path) {
+    if let Ok(file) = OpenOptions::new().create(true).append(true).open(path) {
+        *FILE.lock().unwrap() = Some(file);
+        emit(&format!("===== log opened: {} =====", path.display()));
     }
 }
