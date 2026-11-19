@@ -87,13 +87,17 @@ jobs:
       - name: Install cargo-apk
         run: |
           cargo install cargo-apk --version 0.8.2 --locked --force
-          cargo apk --version
+          ls -la "$HOME/.cargo/bin/cargo-apk"
       - name: Build APK
         run: |
           export PATH="$HOME/.cargo/bin:$PATH"
           echo "NDK_HOME=$NDK_HOME"
+          echo "ANDROID_NDK_HOME=$ANDROID_NDK_HOME"
+          echo "cargo-apk: $(ls -l "$HOME/.cargo/bin/cargo-apk" || echo missing)"
           cd yaobow/yaobow
-          cargo apk build --lib
+          cargo apk build --lib 2>&1 | tee /tmp/apk-build.log
+          echo "=== apk artifacts ==="
+          find . -name "*.apk" -o -name "apk" -type d 2>/dev/null | head -20
       - name: Collect APK
         run: |
           mkdir -p apk-out
