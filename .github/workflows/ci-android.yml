@@ -226,7 +226,10 @@ jobs:
           XML
 
           "$BT/aapt" package -f -M AndroidManifest.xml -I "$PLAT" -F unsigned.apk
-          (cd apkbuild && zip -r -q ../unsigned.apk lib)
+          # Native .so files MUST be stored uncompressed and page-aligned,
+          # otherwise Android cannot mmap them from the APK and NativeActivity
+          # exits immediately without any crash log.
+          (cd apkbuild && zip -0 -r -q ../unsigned.apk lib)
           "$BT/zipalign" -f -p 4 unsigned.apk aligned.apk
           # Fixed debug key (android/debug.p12) so updates install over the
           # previous build instead of failing on a signature mismatch.
