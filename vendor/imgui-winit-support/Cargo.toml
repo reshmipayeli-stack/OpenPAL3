@@ -1,0 +1,19 @@
+[package]
+edition = "2021"
+name = "imgui-winit-support"
+version = "0.13.0"
+description = "winit support code for the imgui crate (vendored, Android fix)"
+homepage = "https://github.com/imgui-rs/imgui-winit-support"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/imgui-rs/imgui-winit-support"
+
+[lib]
+name = "imgui_winit_support"
+path = "src/lib.rs"
+
+[dependencies.imgui]
+version = "0.12.0"
+
+[dependencies.winit]
+version = "0.30"
+default-features = false
