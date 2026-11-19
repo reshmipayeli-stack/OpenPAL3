@@ -590,14 +590,25 @@ pub fn resolve_asset_path(game: GameType) -> Option<String> {
         };
         // Prefer the app's own storage (no storage permission needed),
         // then the shared /sdcard/Games folder.
-        let candidates = [
+        let mut candidates = vec![
             shared::ydirs::android_base_dir().join(folder),
             std::path::PathBuf::from("/sdcard/Games").join(folder),
+            std::path::PathBuf::from("/sdcard/Download").join(folder),
+            std::path::PathBuf::from("/sdcard").join(folder),
             std::path::PathBuf::from("/storage/emulated/0/Games").join(folder),
         ];
+        // Also accept any folder one level below these roots that
+        // contains basedata/, whatever it is named.
+        for root in ["/sdcard/Download", "/sdcard/Games", "/sdcard"] {
+            if let Ok(entries) = std::fs::read_dir(root) {
+                for e in entries.flatten() {
+                    candidates.push(e.path());
+                }
+            }
+        }
         let chosen = candidates
             .iter()
-            .find(|p| p.join("basedata").exists())
+            .find(|p| p.join("basedata").join("basedata.cpk").exists())
             .unwrap_or(&candidates[0]);
         log::info!("PAL asset path candidates: {:?} -> {}", candidates, chosen.display());
         return Some(chosen.to_string_lossy().to_string());

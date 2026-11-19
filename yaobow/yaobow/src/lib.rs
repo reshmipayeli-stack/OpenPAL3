@@ -211,14 +211,17 @@ pub fn android_entry() {
 #[cfg(target_os = "android")]
 #[unsafe(no_mangle)]
 fn android_main(app: radiance::android::AndroidApp) {
-    android_logger::init_once(
-        android_logger::Config::default()
-            .with_max_level(log::LevelFilter::Info)
-            .with_tag("yaobow"),
-    );
-    std::panic::set_hook(Box::new(|info| {
-        log::error!("panic: {info}");
-    }));
+    let app_dir = app
+        .external_data_path()
+        .or_else(|| app.internal_data_path());
+    android_diag::init(app_dir.clone());
     radiance::android::set_android_app(app);
+    if let Some(dir) = &app_dir {
+        android_diag::report_environment(dir);
+    }
     android_entry();
+    log::info!("android_entry returned");
 }
+
+#[cfg(target_os = "android")]
+mod android_diag;

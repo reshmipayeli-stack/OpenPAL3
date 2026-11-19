@@ -200,6 +200,7 @@ jobs:
               android:versionName="0.4-touch">
               <uses-sdk android:minSdkVersion="26" android:targetSdkVersion="29" />
               <uses-feature android:name="android.hardware.vulkan.level" android:required="false" />
+              <uses-permission android:name="android.permission.INTERNET" />
               <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
               <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
               <application
