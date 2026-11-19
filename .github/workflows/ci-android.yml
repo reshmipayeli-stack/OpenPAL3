@@ -106,6 +106,26 @@ jobs:
         run: |
           cargo install cargo-apk --version 0.8.2 --locked --force
           ls -la "$HOME/.cargo/bin/cargo-apk"
+      - name: Drop stale lock entry for patched crate
+        run: |
+          python3 - <<'PY'
+          import re, pathlib
+          p = pathlib.Path("Cargo.lock")
+          s = p.read_text()
+          # Remove the [[package]] block for imgui-winit-support so the
+          # [patch.crates-io] path override is actually selected.
+          pattern = re.compile(
+              r"\[\[package\]\]\nname = \"imgui-winit-support\"\n(?:[^\[]|\[(?!\[package))*(?=\[\[package\]\]|\Z)",
+              re.S,
+          )
+          new, n = pattern.subn("", s)
+          p.write_text(new)
+          print("removed blocks:", n)
+          PY
+          grep -c 'imgui-winit-support' Cargo.lock || echo "entry gone"
+          echo "--- vendored crate present? ---"
+          ls vendor/imgui-winit-support/src/lib.rs
+
       - name: Compile cdylib for arm64
         run: |
           export PATH="$HOME/.cargo/bin:$PATH"
