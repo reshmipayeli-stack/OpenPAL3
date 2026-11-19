@@ -228,10 +228,10 @@ jobs:
           "$BT/aapt" package -f -M AndroidManifest.xml -I "$PLAT" -F unsigned.apk
           (cd apkbuild && zip -r -q ../unsigned.apk lib)
           "$BT/zipalign" -f -p 4 unsigned.apk aligned.apk
-          keytool -genkeypair -keystore debug.keystore -storepass android -keypass android \
-            -alias androiddebugkey -dname "CN=Android Debug,O=Android,C=US" \
-            -keyalg RSA -keysize 2048 -validity 10000 -noprompt
-          "$BT/apksigner" sign --ks debug.keystore --ks-pass pass:android --key-pass pass:android \
+          # Fixed debug key (android/debug.p12) so updates install over the
+          # previous build instead of failing on a signature mismatch.
+          "$BT/apksigner" sign --ks android/debug.p12 --ks-type PKCS12 \
+            --ks-pass pass:android --key-pass pass:android --ks-key-alias androiddebugkey \
             --out apk-out/OpenPAL3.apk aligned.apk
           "$BT/apksigner" verify --verbose apk-out/OpenPAL3.apk | head -5
 
