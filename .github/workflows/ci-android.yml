@@ -106,7 +106,7 @@ jobs:
         run: |
           cargo install cargo-apk --version 0.8.2 --locked --force
           ls -la "$HOME/.cargo/bin/cargo-apk"
-      - name: Drop stale lock entry for patched crate
+      - name: Drop stale lock entries for patched crates
         run: |
           python3 - <<'PY'
           import re, pathlib
@@ -115,7 +115,7 @@ jobs:
           # Remove the [[package]] block for imgui-winit-support so the
           # [patch.crates-io] path override is actually selected.
           pattern = re.compile(
-              r"\[\[package\]\]\nname = \"imgui-winit-support\"\n(?:[^\[]|\[(?!\[package))*(?=\[\[package\]\]|\Z)",
+              r"\[\[package\]\]\nname = \"(?:imgui-winit-support|native-dialog)\"\n(?:[^\[]|\[(?!\[package))*(?=\[\[package\]\]|\Z)",
               re.S,
           )
           new, n = pattern.subn("", s)
