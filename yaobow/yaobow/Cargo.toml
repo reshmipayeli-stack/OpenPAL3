@@ -46,9 +46,10 @@ version = "0.4.14"
 features = ["max_level_debug", "release_max_level_debug"]
 
 [target.'cfg(target_os = "android")'.dependencies]
-ndk = "0.5.0"
-ndk-sys = "0.3.0"
-ndk-glue = "0.5.0"
+# ndk-glue was removed: it defines its own ANativeActivity_onCreate, which
+# collided at link time with the one from android-activity (pulled in by
+# winit 0.30 with the `android-native-activity` feature).
+android_logger = "0.14"
 
 [target.'cfg(not(target_os = "vita"))'.dependencies]
 simple_logger = "4"

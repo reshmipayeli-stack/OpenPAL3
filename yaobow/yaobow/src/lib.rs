@@ -202,7 +202,23 @@ pub use openpal3::{
     run_openpal3, run_openpal3_with_agent, run_openpal3a, run_openpal3a_with_agent,
 };
 
-#[cfg_attr(target_os = "android", ndk_glue::main(backtrace = "on"))]
 pub fn android_entry() {
     openpal3::run_openpal3();
+}
+
+/// Android entry point called by `android-activity` (NativeActivity
+/// backend, enabled through winit's `android-native-activity` feature).
+#[cfg(target_os = "android")]
+#[unsafe(no_mangle)]
+fn android_main(app: radiance::android::AndroidApp) {
+    android_logger::init_once(
+        android_logger::Config::default()
+            .with_max_level(log::LevelFilter::Info)
+            .with_tag("yaobow"),
+    );
+    std::panic::set_hook(Box::new(|info| {
+        log::error!("panic: {info}");
+    }));
+    radiance::android::set_android_app(app);
+    android_entry();
 }

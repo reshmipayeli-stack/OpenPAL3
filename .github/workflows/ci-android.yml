@@ -102,10 +102,6 @@ jobs:
           fi
           test -d vcpkg_installed
           find vcpkg_installed -name "*.a" | head -20
-      - name: Install cargo-apk
-        run: |
-          cargo install cargo-apk --version 0.8.2 --locked --force
-          ls -la "$HOME/.cargo/bin/cargo-apk"
       - name: Drop stale lock entries for patched crates
         run: |
           python3 - <<'PY'
@@ -128,6 +124,7 @@ jobs:
 
       - name: Compile cdylib for arm64
         run: |
+          set -o pipefail
           export PATH="$HOME/.cargo/bin:$PATH"
           rustup target list --installed | grep aarch64 || rustup target add aarch64-linux-android
           TOOLCHAIN="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
@@ -158,39 +155,89 @@ jobs:
           echo "LIBCLANG_PATH=$LIBCLANG_PATH"
           ls "$LIBCLANG_PATH"/libclang* 2>/dev/null | head -3 || echo "no libclang in LIBCLANG_PATH"
           echo "BINDGEN_EXTRA_CLANG_ARGS=$BINDGEN_EXTRA_CLANG_ARGS"
-          cargo build --release --target aarch64-linux-android -p yaobow --lib 2>&1 | tail -60
+          cargo build --release --target aarch64-linux-android -p yaobow --lib 2>&1 | tail -80
           echo "=== produced .so ==="
-          find target/aarch64-linux-android -name "*.so" -exec ls -lh {} \; || echo "none"
+          ls -lh target/aarch64-linux-android/release/libyaobow_lib.so
 
-      - name: Package APK
+      - name: Package APK (aapt + zipalign + apksigner)
         run: |
-          export PATH="$HOME/.cargo/bin:$PATH"
-          cd yaobow/yaobow
-          cargo apk build --lib 2>&1 | tail -30 || echo "cargo-apk packaging step reported failure"
-          echo "=== apk artifacts ==="
-          find . -name "*.apk" -exec ls -lh {} \;
-      - name: Collect APK
-        run: |
-          mkdir -p apk-out
-          find "$GITHUB_WORKSPACE" -name "*.apk" -type f 2>/dev/null | tee /tmp/apks.txt
-          while read -r f; do [ -n "$f" ] && cp "$f" apk-out/; done < /tmp/apks.txt
-          ls -la apk-out/
-          echo "=== verify each apk contains native libs ==="
-          for a in apk-out/*.apk; do
-            [ -e "$a" ] || continue
-            echo "--- $a ($(stat -c%s "$a") bytes) ---"
-            unzip -l "$a" | grep -E '\.so|lib/' || echo "NO NATIVE LIBS IN $a"
+          set -euo pipefail
+          BT="$ANDROID_HOME/build-tools/30.0.3"
+          PLAT="$ANDROID_HOME/platforms/android-30/android.jar"
+          TOOLCHAIN="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          SYSLIB="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android"
+          SO=target/aarch64-linux-android/release/libyaobow_lib.so
+
+          rm -rf apkbuild apk-out && mkdir -p apkbuild/lib/arm64-v8a apk-out
+          cp "$SO" apkbuild/lib/arm64-v8a/
+          "$TOOLCHAIN/llvm-strip" --strip-unneeded apkbuild/lib/arm64-v8a/libyaobow_lib.so
+          ls -lh apkbuild/lib/arm64-v8a/
+
+          echo "=== NEEDED shared libraries ==="
+          NEEDED=$("$TOOLCHAIN/llvm-readelf" -d "$SO" | sed -n 's/.*Shared library: \[\(.*\)\]/\1/p')
+          echo "$NEEDED"
+          SYSTEM_LIBS="libc.so libm.so libdl.so liblog.so libandroid.so libvulkan.so libEGL.so libGLESv1_CM.so libGLESv2.so libGLESv3.so libOpenSLES.so libaaudio.so libmediandk.so libz.so libjnigraphics.so libnativewindow.so"
+          MISSING=""
+          for lib in $NEEDED; do
+            case " $SYSTEM_LIBS " in *" $lib "*) continue;; esac
+            if [ -f "$SYSLIB/$lib" ]; then
+              echo "bundling $lib from NDK"
+              cp "$SYSLIB/$lib" apkbuild/lib/arm64-v8a/
+            else
+              MISSING="$MISSING $lib"
+            fi
           done
-          # fail loudly if every apk is a stub (manifest only)
-          GOOD=0
-          for a in apk-out/*.apk; do
-            [ -e "$a" ] || continue
-            if unzip -l "$a" | grep -q '\.so'; then GOOD=1; fi
-          done
-          if [ "$GOOD" = "0" ]; then
-            echo "::error::No APK contains native .so libraries - the build produced a stub package"
+          if [ -n "$MISSING" ]; then
+            echo "::error::Non-system shared libraries not found to bundle:$MISSING"
             exit 1
           fi
+
+          cat > AndroidManifest.xml <<'XML'
+          <?xml version="1.0" encoding="utf-8"?>
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android"
+              package="io.github.openpal3.yaobow"
+              android:versionCode="1"
+              android:versionName="0.4-touch">
+              <uses-sdk android:minSdkVersion="26" android:targetSdkVersion="29" />
+              <uses-feature android:name="android.hardware.vulkan.level" android:required="false" />
+              <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
+              <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
+              <application
+                  android:label="OpenPAL3"
+                  android:hasCode="false"
+                  android:extractNativeLibs="true"
+                  android:requestLegacyExternalStorage="true"
+                  android:theme="@android:style/Theme.NoTitleBar.Fullscreen">
+                  <activity
+                      android:name="android.app.NativeActivity"
+                      android:exported="true"
+                      android:launchMode="singleTop"
+                      android:screenOrientation="sensorLandscape"
+                      android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|keyboard|navigation">
+                      <meta-data android:name="android.app.lib_name" android:value="yaobow_lib" />
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN" />
+                          <category android:name="android.intent.category.LAUNCHER" />
+                      </intent-filter>
+                  </activity>
+              </application>
+          </manifest>
+          XML
+
+          "$BT/aapt" package -f -M AndroidManifest.xml -I "$PLAT" -F unsigned.apk
+          (cd apkbuild && zip -r -q ../unsigned.apk lib)
+          "$BT/zipalign" -f -p 4 unsigned.apk aligned.apk
+          keytool -genkeypair -keystore debug.keystore -storepass android -keypass android \
+            -alias androiddebugkey -dname "CN=Android Debug,O=Android,C=US" \
+            -keyalg RSA -keysize 2048 -validity 10000 -noprompt
+          "$BT/apksigner" sign --ks debug.keystore --ks-pass pass:android --key-pass pass:android \
+            --out apk-out/OpenPAL3.apk aligned.apk
+          "$BT/apksigner" verify --verbose apk-out/OpenPAL3.apk | head -5
+
+          echo "=== APK contents ==="
+          unzip -l apk-out/OpenPAL3.apk
+          unzip -l apk-out/OpenPAL3.apk | grep -q 'lib/arm64-v8a/libyaobow_lib.so' \
+            || { echo "::error::APK is missing libyaobow_lib.so"; exit 1; }
       - uses: actions/upload-artifact@v4
         with:
           name: openpal3-android-apk

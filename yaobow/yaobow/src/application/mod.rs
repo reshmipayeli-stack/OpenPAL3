@@ -579,11 +579,28 @@ pub fn resolve_asset_path(game: GameType) -> Option<String> {
     }
     #[cfg(target_os = "android")]
     {
-        return match game {
-            GameType::PAL3 => Some("/sdcard/Games/PAL3".to_string()),
-            GameType::PAL4 => Some("/sdcard/Games/PAL4".to_string()),
-            _ => None,
+        let configured = YaobowConfig::load().asset_path_for(game).to_string();
+        if !configured.is_empty() {
+            return Some(configured);
+        }
+        let folder = match game {
+            GameType::PAL3 => "PAL3",
+            GameType::PAL4 => "PAL4",
+            _ => return None,
         };
+        // Prefer the app's own storage (no storage permission needed),
+        // then the shared /sdcard/Games folder.
+        let candidates = [
+            shared::ydirs::android_base_dir().join(folder),
+            std::path::PathBuf::from("/sdcard/Games").join(folder),
+            std::path::PathBuf::from("/storage/emulated/0/Games").join(folder),
+        ];
+        let chosen = candidates
+            .iter()
+            .find(|p| p.join("basedata").exists())
+            .unwrap_or(&candidates[0]);
+        log::info!("PAL asset path candidates: {:?} -> {}", candidates, chosen.display());
+        return Some(chosen.to_string_lossy().to_string());
     }
     #[cfg(vita)]
     {

@@ -54,6 +54,15 @@ pub struct Platform {
 
 impl Platform {
     pub fn new() -> Self {
+        #[cfg(target_os = "android")]
+        let event_loop = {
+            use winit::platform::android::EventLoopBuilderExtAndroid;
+            EventLoop::builder()
+                .with_android_app(crate::android::android_app())
+                .build()
+                .unwrap()
+        };
+        #[cfg(not(target_os = "android"))]
         let event_loop = EventLoop::new().unwrap();
         let wa = WindowAttributes::default()
             .with_title("Radiance")

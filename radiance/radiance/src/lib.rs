@@ -15,6 +15,8 @@ pub mod comdef {
     };
     pub use crate::scene::{IEntityExt, ISceneExt, ISceneManagerExt};
 }
+#[cfg(target_os = "android")]
+pub mod android;
 pub mod application;
 pub mod asset;
 pub mod audio;
