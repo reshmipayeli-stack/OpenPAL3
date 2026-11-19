@@ -45,16 +45,23 @@ jobs:
           echo "$(dirname "$SDKMANAGER")" >> $GITHUB_PATH
           yes | "$SDKMANAGER" --licenses > /dev/null 2>&1 || true
           "$SDKMANAGER" "platform-tools" "platforms;android-30" "build-tools;30.0.3" "ndk;25.2.9519653"
-          echo "NDK installed at $ANDROID_HOME/ndk/25.2.9519653"
+          echo "--- available NDKs ---"
           ls "$ANDROID_HOME/ndk" || true
+          NDK_DIR=$(ls -d "$ANDROID_HOME"/ndk/25.2.9519653 2>/dev/null | head -1)
+          if [ -z "$NDK_DIR" ]; then NDK_DIR=$(ls -d "$ANDROID_HOME"/ndk/* 2>/dev/null | head -1); fi
+          echo "Chosen NDK: $NDK_DIR"
+          echo "NDK_HOME=$NDK_DIR" >> $GITHUB_ENV
+          echo "ANDROID_NDK_HOME=$NDK_DIR" >> $GITHUB_ENV
+          echo "ANDROID_NDK_ROOT=$NDK_DIR" >> $GITHUB_ENV
       - name: Install native deps
         run: |
           sudo apt-get update
           sudo apt-get install -y nasm libvulkan-dev wget gnupg ca-certificates
-      - name: Set NDK env
+      - name: Verify NDK env
         run: |
-          echo "NDK_HOME=$ANDROID_HOME/ndk/25.2.9519653" >> $GITHUB_ENV
-          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/25.2.9519653" >> $GITHUB_ENV
+          echo "NDK_HOME=$NDK_HOME"
+          echo "ANDROID_NDK_HOME=$ANDROID_NDK_HOME"
+          test -d "$ANDROID_NDK_HOME" && echo "NDK dir OK"
       - name: Cache ffmpeg
         id: cache-ffmpeg
         uses: actions/cache@v4
@@ -78,13 +85,15 @@ jobs:
           test -d vcpkg_installed
           find vcpkg_installed -name "*.a" | head -20
       - name: Install cargo-apk
-        run: cargo install cargo-apk --locked
+        run: |
+          cargo install cargo-apk --version 0.8.2 --locked --force
+          cargo apk --version
       - name: Build APK
         run: |
           export PATH="$HOME/.cargo/bin:$PATH"
-          export NDK_HOME="$ANDROID_HOME/ndk/25.2.9519653"
-          export ANDROID_NDK_HOME="$NDK_HOME"
-          cd yaobow/yaobow && cargo apk build --lib
+          echo "NDK_HOME=$NDK_HOME"
+          cd yaobow/yaobow
+          cargo apk build --lib
       - name: Collect APK
         run: |
           mkdir -p apk-out
