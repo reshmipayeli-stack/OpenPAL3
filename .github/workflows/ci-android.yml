@@ -71,6 +71,10 @@ jobs:
             exit 1
           fi
           glslc --version
+          # libclang is required by bindgen (ffmpeg-sys)
+          sudo apt-get install -y libclang-dev llvm-dev
+          echo "--- locate libclang ---"
+          find /usr/lib -name "libclang*.so*" 2>/dev/null | head -10
       - name: Verify NDK env
         run: |
           echo "NDK_HOME=$NDK_HOME"
@@ -122,7 +126,17 @@ jobs:
           # bindgen (ffmpeg-sys) must use the Android sysroot, not host /usr/include
           export BINDGEN_EXTRA_CLANG_ARGS_aarch64_linux_android="--sysroot=$SYSROOT --target=aarch64-linux-android24 -I$SYSROOT/usr/include -I$SYSROOT/usr/include/aarch64-linux-android"
           export BINDGEN_EXTRA_CLANG_ARGS="--sysroot=$SYSROOT --target=aarch64-linux-android24 -I$SYSROOT/usr/include -I$SYSROOT/usr/include/aarch64-linux-android"
-          export LIBCLANG_PATH="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/lib"
+          # Prefer a real host libclang for bindgen (the NDK ships clang libs
+          # but not a libclang.so that bindgen's loader recognises).
+          LIBCLANG_FILE=$(find /usr/lib /usr/local/lib -name 'libclang-*.so*' -o -name 'libclang.so*' 2>/dev/null | head -1)
+          echo "LIBCLANG_FILE=$LIBCLANG_FILE"
+          if [ -n "$LIBCLANG_FILE" ]; then
+            export LIBCLANG_PATH="$(dirname "$LIBCLANG_FILE")"
+          else
+            export LIBCLANG_PATH="/usr/lib/llvm-14/lib"
+          fi
+          echo "LIBCLANG_PATH=$LIBCLANG_PATH"
+          ls "$LIBCLANG_PATH"/libclang* 2>/dev/null | head -3 || echo "no libclang in LIBCLANG_PATH"
           echo "BINDGEN_EXTRA_CLANG_ARGS=$BINDGEN_EXTRA_CLANG_ARGS"
           cargo build --release --target aarch64-linux-android -p yaobow --lib 2>&1 | tail -60
           echo "=== produced .so ==="
