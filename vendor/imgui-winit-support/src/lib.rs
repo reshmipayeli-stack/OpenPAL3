@@ -10,9 +10,12 @@ pub use winit;
 use winit::{
     dpi::{LogicalPosition, LogicalSize},
     keyboard::{Key as WinitKey, KeyLocation, NamedKey},
-    #[cfg(not(target_os = "android"))]
-    platform::modifier_supplement::KeyEventExtModifierSupplement,
 };
+
+// winit only exposes `modifier_supplement` on
+// windows/macos/x11/wayland/orbital - not on Android.
+#[cfg(not(target_os = "android"))]
+use winit::platform::modifier_supplement::KeyEventExtModifierSupplement;
 
 use winit::{
     error::ExternalError,
