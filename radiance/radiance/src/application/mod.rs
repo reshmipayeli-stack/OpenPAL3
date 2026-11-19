@@ -6,7 +6,7 @@ mod vita;
 #[cfg(windows)]
 mod windows;
 #[cfg(any(linux, macos, android))]
-mod winit;
+pub(crate) mod winit;
 
 #[cfg(any(linux, macos, android))]
 pub use self::winit::Platform;
