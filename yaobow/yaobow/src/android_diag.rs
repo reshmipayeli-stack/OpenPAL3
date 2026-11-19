@@ -71,12 +71,18 @@ impl log::Log for TeeLogger {
 
 /// Install the logger and panic hook. Call first thing in `android_main`.
 pub fn init(log_dir: Option<PathBuf>) {
-    // Always try the shared Download directory first: in the HarmonyOS
-    // Android container it is visible from the host, while app-private
-    // storage is not.
-    let shared = PathBuf::from("/sdcard/Download");
-    let _ = std::fs::create_dir_all(&shared);
-    init_file(&shared.join("openpal3-debug.log"));
+    // Try several candidate paths: the HarmonyOS Android container maps
+    // shared storage somewhere unexpected, so cover the common Android
+    // locations as well as app-private storage. Write to ALL of them;
+    // whichever one is visible from the host wins.
+    for candidate in [
+        PathBuf::from("/sdcard/Download"),
+        PathBuf::from("/storage/emulated/0/Download"),
+        PathBuf::from("/mnt/sdcard/Download"),
+        PathBuf::from("/storage/media/100/local/files/Docs/Download"),
+    ] {
+        init_file(&candidate.join("openpal3-debug.log"));
+    }
 
     let addr = SocketAddr::from(([127, 0, 0, 1], DIAG_PORT));
     if let Ok(stream) = TcpStream::connect_timeout(&addr, Duration::from_millis(800)) {
