@@ -220,8 +220,27 @@ fn android_main(app: radiance::android::AndroidApp) {
         android_diag::report_environment(dir);
         android_assets::ensure_pal3_data(dir);
     }
-    android_entry();
-    log::info!("android_entry returned");
+    // Direct-booting PAL3 without its data fails deep inside asset
+    // mounting. Without data, show the title page instead: it needs no
+    // game files, so it also proves the renderer works on this device.
+    let pal3_data = application::resolve_asset_path(shared::GameType::PAL3)
+        .filter(|p| {
+            std::path::Path::new(p)
+                .join("basedata")
+                .join("basedata.cpk")
+                .exists()
+        });
+    match pal3_data {
+        Some(path) => {
+            log::info!("PAL3 data found at {path}, booting PAL3");
+            android_entry();
+        }
+        None => {
+            log::warn!("PAL3 data not found, showing the title page");
+            run_title_selection();
+        }
+    }
+    log::info!("android_main finished");
 }
 
 #[cfg(target_os = "android")]

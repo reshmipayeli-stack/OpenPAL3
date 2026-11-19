@@ -14,7 +14,7 @@
 use log::Log;
 use std::fs::{File, OpenOptions};
 use std::io::Write;
-use std::net::{SocketAddr, TcpStream};
+use std::net::{SocketAddr, TcpStream, UdpSocket};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::Duration;
@@ -23,8 +23,20 @@ const DIAG_PORT: u16 = 47321;
 
 static TCP: Mutex<Option<TcpStream>> = Mutex::new(None);
 static FILE: Mutex<Option<File>> = Mutex::new(None);
+/// Broadcast every log line on the LAN (UDP 47322) so a PC on the same
+/// Wi-Fi can read it even when the container's storage and loopback are
+/// not reachable from outside.
+static UDP: Mutex<Option<UdpSocket>> = Mutex::new(None);
+const UDP_PORT: u16 = 47322;
 
 fn emit(line: &str) {
+    if let Ok(guard) = UDP.lock() {
+        if let Some(sock) = guard.as_ref() {
+            for chunk in line.as_bytes().chunks(1200) {
+                let _ = sock.send_to(chunk, ("255.255.255.255", UDP_PORT));
+            }
+        }
+    }
     if let Ok(mut guard) = TCP.lock() {
         if let Some(stream) = guard.as_mut() {
             let ok = stream
@@ -71,6 +83,11 @@ impl log::Log for TeeLogger {
 
 /// Install the logger and panic hook. Call first thing in `android_main`.
 pub fn init(log_dir: Option<PathBuf>) {
+    if let Ok(sock) = UdpSocket::bind("0.0.0.0:0") {
+        if sock.set_broadcast(true).is_ok() {
+            *UDP.lock().unwrap() = Some(sock);
+        }
+    }
     // Try several candidate paths: the HarmonyOS Android container maps
     // shared storage somewhere unexpected, so cover the common Android
     // locations as well as app-private storage. Write to ALL of them;
