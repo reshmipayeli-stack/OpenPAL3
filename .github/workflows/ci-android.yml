@@ -88,22 +88,52 @@ jobs:
         run: |
           cargo install cargo-apk --version 0.8.2 --locked --force
           ls -la "$HOME/.cargo/bin/cargo-apk"
-      - name: Build APK
+      - name: Compile cdylib for arm64
         run: |
           export PATH="$HOME/.cargo/bin:$PATH"
-          echo "NDK_HOME=$NDK_HOME"
-          echo "ANDROID_NDK_HOME=$ANDROID_NDK_HOME"
-          echo "cargo-apk: $(ls -l "$HOME/.cargo/bin/cargo-apk" || echo missing)"
+          rustup target list --installed | grep aarch64 || rustup target add aarch64-linux-android
+          TOOLCHAIN="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          echo "toolchain: $TOOLCHAIN"
+          ls "$TOOLCHAIN"/aarch64-linux-android*-clang | head -5
+          export CC_aarch64_linux_android="$TOOLCHAIN/aarch64-linux-android24-clang"
+          export CXX_aarch64_linux_android="$TOOLCHAIN/aarch64-linux-android24-clang++"
+          export AR_aarch64_linux_android="$TOOLCHAIN/llvm-ar"
+          export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="$CC_aarch64_linux_android"
+          export CFLAGS_aarch64_linux_android="--target=aarch64-linux-android24"
+          export CXXFLAGS_aarch64_linux_android="--target=aarch64-linux-android24"
+          cargo build --release --target aarch64-linux-android -p yaobow --lib 2>&1 | tail -40
+          echo "=== produced .so ==="
+          find target/aarch64-linux-android -name "*.so" -exec ls -lh {} \;
+
+      - name: Package APK
+        run: |
+          export PATH="$HOME/.cargo/bin:$PATH"
           cd yaobow/yaobow
-          cargo apk build --lib 2>&1 | tee /tmp/apk-build.log
+          cargo apk build --lib 2>&1 | tail -30 || echo "cargo-apk packaging step reported failure"
           echo "=== apk artifacts ==="
-          find . -name "*.apk" -o -name "apk" -type d 2>/dev/null | head -20
+          find . -name "*.apk" -exec ls -lh {} \;
       - name: Collect APK
         run: |
           mkdir -p apk-out
           find "$GITHUB_WORKSPACE" -name "*.apk" -type f 2>/dev/null | tee /tmp/apks.txt
           while read -r f; do [ -n "$f" ] && cp "$f" apk-out/; done < /tmp/apks.txt
           ls -la apk-out/
+          echo "=== verify each apk contains native libs ==="
+          for a in apk-out/*.apk; do
+            [ -e "$a" ] || continue
+            echo "--- $a ($(stat -c%s "$a") bytes) ---"
+            unzip -l "$a" | grep -E '\.so|lib/' || echo "NO NATIVE LIBS IN $a"
+          done
+          # fail loudly if every apk is a stub (manifest only)
+          GOOD=0
+          for a in apk-out/*.apk; do
+            [ -e "$a" ] || continue
+            if unzip -l "$a" | grep -q '\.so'; then GOOD=1; fi
+          done
+          if [ "$GOOD" = "0" ]; then
+            echo "::error::No APK contains native .so libraries - the build produced a stub package"
+            exit 1
+          fi
       - uses: actions/upload-artifact@v4
         with:
           name: openpal3-android-apk
