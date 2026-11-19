@@ -11,6 +11,7 @@
 //! Both sinks are best-effort: if neither is reachable the game runs as
 //! usual and logs only go to logcat.
 
+use log::Log;
 use std::fs::{File, OpenOptions};
 use std::io::Write;
 use std::net::{SocketAddr, TcpStream};
