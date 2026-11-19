@@ -143,6 +143,9 @@ jobs:
           # bindgen (ffmpeg-sys) must use the Android sysroot, not host /usr/include
           export BINDGEN_EXTRA_CLANG_ARGS_aarch64_linux_android="--sysroot=$SYSROOT --target=aarch64-linux-android24 -I$SYSROOT/usr/include -I$SYSROOT/usr/include/aarch64-linux-android"
           export BINDGEN_EXTRA_CLANG_ARGS="--sysroot=$SYSROOT --target=aarch64-linux-android24 -I$SYSROOT/usr/include -I$SYSROOT/usr/include/aarch64-linux-android"
+          # Force 4KB PT_LOAD alignment: newer LLD defaults to 16KB pages,
+          # which older Android containers cannot load.
+          export RUSTFLAGS="${RUSTFLAGS:-} -C link-arg=-Wl,-z,max-page-size=4096"
           # Prefer a real host libclang for bindgen (the NDK ships clang libs
           # but not a libclang.so that bindgen's loader recognises).
           LIBCLANG_FILE=$(find /usr/lib /usr/local/lib -name 'libclang-*.so*' -o -name 'libclang.so*' 2>/dev/null | head -1)
