@@ -206,7 +206,7 @@ jobs:
               <application
                   android:label="OpenPAL3"
                   android:hasCode="false"
-                  android:extractNativeLibs="true"
+                  android:extractNativeLibs="false"
                   android:requestLegacyExternalStorage="true"
                   android:theme="@android:style/Theme.NoTitleBar.Fullscreen">
                   <activity
