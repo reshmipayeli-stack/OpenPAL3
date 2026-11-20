@@ -247,3 +247,5 @@ fn android_main(app: radiance::android::AndroidApp) {
 mod android_assets;
 #[cfg(target_os = "android")]
 mod android_diag;
+#[cfg(target_os = "android")]
+mod android_early;
