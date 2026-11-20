@@ -146,6 +146,14 @@ jobs:
           # Force 4KB PT_LOAD alignment: newer LLD defaults to 16KB pages,
           # which older Android containers cannot load.
           export RUSTFLAGS="${RUSTFLAGS:-} -C link-arg=-Wl,-z,max-page-size=4096"
+          # rustc links with -nodefaultlibs, which drops clang's compiler-rt
+          # builtins. C dependencies still reference helpers such as
+          # __clear_cache that bionic does not export, so the .so failed to
+          # dlopen on the device. Link the builtins archive explicitly.
+          BUILTINS=$("$CC_aarch64_linux_android" -print-libgcc-file-name)
+          echo "compiler-rt builtins: $BUILTINS"
+          test -f "$BUILTINS"
+          export RUSTFLAGS="$RUSTFLAGS -C link-arg=$BUILTINS"
           # Prefer a real host libclang for bindgen (the NDK ships clang libs
           # but not a libclang.so that bindgen's loader recognises).
           LIBCLANG_FILE=$(find /usr/lib /usr/local/lib -name 'libclang-*.so*' -o -name 'libclang.so*' 2>/dev/null | head -1)
@@ -161,6 +169,29 @@ jobs:
           cargo build --release --target aarch64-linux-android -p yaobow --lib 2>&1 | tail -80
           echo "=== produced .so ==="
           ls -lh target/aarch64-linux-android/release/libyaobow_lib.so
+
+      - name: Verify every imported symbol resolves on Android
+        run: |
+          set -euo pipefail
+          BIN="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          LIBDIR="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android"
+          SO=target/aarch64-linux-android/release/libyaobow_lib.so
+          # Strong (non-weak) undefined dynamic symbols, without @VERSION.
+          "$BIN/llvm-nm" -D --undefined-only "$SO" | awk '$1=="U"{print $2}' | sed 's/@.*//' | sort -u > need.txt
+          : > have.txt
+          for lib in $("$BIN/llvm-readelf" -d "$SO" | sed -n 's/.*Shared library: \[\(.*\)\]/\1/p'); do
+            if [ -f "$LIBDIR/26/$lib" ]; then f="$LIBDIR/26/$lib"; else f="$LIBDIR/$lib"; fi
+            [ -f "$f" ] || { echo "::error::stub for $lib not found"; exit 1; }
+            "$BIN/llvm-nm" -D --defined-only "$f" | awk '{print $NF}' | sed 's/@.*//' >> have.txt
+          done
+          sort -u have.txt -o have.txt
+          comm -23 need.txt have.txt > missing.txt
+          echo "imports: $(wc -l < need.txt), unresolved: $(wc -l < missing.txt)"
+          if [ -s missing.txt ]; then
+            cat missing.txt
+            echo "::error::libyaobow_lib.so imports symbols no Android library provides; it would fail to dlopen"
+            exit 1
+          fi
 
       - name: Package APK (aapt + zipalign + apksigner)
         run: |
