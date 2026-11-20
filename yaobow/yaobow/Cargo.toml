@@ -50,6 +50,7 @@ features = ["max_level_debug", "release_max_level_debug"]
 # collided at link time with the one from android-activity (pulled in by
 # winit 0.30 with the `android-native-activity` feature).
 android_logger = "0.14"
+libc = "0.2"
 zip = { version = "2", default-features = false, features = ["deflate"] }
 
 [target.'cfg(not(target_os = "vita"))'.dependencies]
