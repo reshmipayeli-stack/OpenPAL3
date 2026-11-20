@@ -9,7 +9,7 @@
 use std::ffi::CString;
 use std::os::raw::{c_char, c_int};
 
-extern "C" {
+unsafe extern "C" {
     fn open(path: *const c_char, flags: c_int, mode: c_int) -> c_int;
     fn write(fd: c_int, buf: *const u8, count: usize) -> isize;
     fn close(fd: c_int);
@@ -49,7 +49,7 @@ fn tcp_probe(msg: &str, ip: [u8; 4], port: u16) {
         return;
     }
     let mut addr = [0u8; 16];
-    addr[0] = 2; // sin_family = AF_INET (little endian low byte)
+    addr[0] = 2; // sin_family = AF_INET, little endian low byte
     addr[2] = (port >> 8) as u8;
     addr[3] = (port & 0xff) as u8;
     addr[4..8].copy_from_slice(&ip);
@@ -63,13 +63,14 @@ fn tcp_probe(msg: &str, ip: [u8; 4], port: u16) {
     unsafe { close(fd) };
 }
 
-fn early_probe() {
+extern "C" fn early_probe() {
     let msg = "===== libyaobow_lib.so loaded (init_array probe) =====\n";
     append_everywhere(msg);
-    tcp_probe(msg.trim_end(), [127, 0, 0, 1], 47321);
-    tcp_probe(msg.trim_end(), [192, 168, 1, 33], 47321);
+    let line = msg.trim_end();
+    tcp_probe(line, [127, 0, 0, 1], 47321);
+    tcp_probe(line, [192, 168, 1, 33], 47321);
 }
 
 #[used]
-#[link_section = ".init_array"]
+#[unsafe(link_section = ".init_array")]
 static EARLY_PROBE: extern "C" fn() = early_probe;
