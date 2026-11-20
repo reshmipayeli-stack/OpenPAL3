@@ -5,16 +5,26 @@
 //! all is something the library itself emits. This probe runs from
 //! `.init_array`, i.e. during `dlopen`, before `android_main` and before the
 //! Rust runtime starts, and therefore only uses raw libc calls.
+//!
+//! The libc functions are imported under private Rust names via
+//! `#[link_name]`: declaring them as `fn open` / `fn close` is rejected by
+//! rustc because those identifiers are reserved for the standard library's
+//! own runtime symbols.
 
 use std::ffi::CString;
 use std::os::raw::{c_char, c_int};
 
 unsafe extern "C" {
-    fn open(path: *const c_char, flags: c_int, mode: c_int) -> c_int;
-    fn write(fd: c_int, buf: *const u8, count: usize) -> isize;
-    fn close(fd: c_int);
-    fn socket(domain: c_int, ty: c_int, protocol: c_int) -> c_int;
-    fn connect(fd: c_int, addr: *const u8, len: u32) -> c_int;
+    #[link_name = "open"]
+    fn sys_open(path: *const c_char, flags: c_int, mode: c_int) -> c_int;
+    #[link_name = "write"]
+    fn sys_write(fd: c_int, buf: *const u8, count: usize) -> isize;
+    #[link_name = "close"]
+    fn sys_close(fd: c_int);
+    #[link_name = "socket"]
+    fn sys_socket(domain: c_int, ty: c_int, protocol: c_int) -> c_int;
+    #[link_name = "connect"]
+    fn sys_connect(fd: c_int, addr: *const u8, len: u32) -> c_int;
 }
 
 const O_WRONLY: c_int = 1;
@@ -31,11 +41,11 @@ fn append_everywhere(msg: &str) {
         "/data/local/tmp/openpal3-early.txt",
     ] {
         if let Ok(cpath) = CString::new(path) {
-            let fd = unsafe { open(cpath.as_ptr(), O_WRONLY | O_CREAT | O_APPEND, 0o666) };
+            let fd = unsafe { sys_open(cpath.as_ptr(), O_WRONLY | O_CREAT | O_APPEND, 0o666) };
             if fd >= 0 {
                 unsafe {
-                    write(fd, msg.as_ptr(), msg.len());
-                    close(fd);
+                    sys_write(fd, msg.as_ptr(), msg.len());
+                    sys_close(fd);
                 }
             }
         }
@@ -44,7 +54,7 @@ fn append_everywhere(msg: &str) {
 
 /// Best effort IPv4 TCP connect that writes one line and closes.
 fn tcp_probe(msg: &str, ip: [u8; 4], port: u16) {
-    let fd = unsafe { socket(2 /* AF_INET */, 1 /* SOCK_STREAM */, 0) };
+    let fd = unsafe { sys_socket(2 /* AF_INET */, 1 /* SOCK_STREAM */, 0) };
     if fd < 0 {
         return;
     }
@@ -53,14 +63,14 @@ fn tcp_probe(msg: &str, ip: [u8; 4], port: u16) {
     addr[2] = (port >> 8) as u8;
     addr[3] = (port & 0xff) as u8;
     addr[4..8].copy_from_slice(&ip);
-    let ok = unsafe { connect(fd, addr.as_ptr(), 16) } == 0;
+    let ok = unsafe { sys_connect(fd, addr.as_ptr(), 16) } == 0;
     if ok {
         unsafe {
-            write(fd, msg.as_ptr(), msg.len());
-            write(fd, b"\n".as_ptr(), 1);
+            sys_write(fd, msg.as_ptr(), msg.len());
+            sys_write(fd, b"\n".as_ptr(), 1);
         }
     }
-    unsafe { close(fd) };
+    unsafe { sys_close(fd) };
 }
 
 extern "C" fn early_probe() {
